@@ -83,7 +83,7 @@ Die Aktivierung verhindert jedoch potenzielle Serverprobleme.
 
 <hr>
 
-<h2>💡 Tipp</h2>
+<h2>💡Tipp</h2>
 <p>Wenn du eine „Nächste Karte“-Nachricht länger anzeigen möchtest, setze:</p>
 
 <pre><code>mp_match_restart_delay 15–20
