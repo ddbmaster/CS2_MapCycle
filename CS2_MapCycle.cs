@@ -1,14 +1,7 @@
 ﻿using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Cvars;
-using CounterStrikeSharp.API.Modules.Extensions;
 using CounterStrikeSharp.API.Modules.Utils;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace CS2_MapCycle;
@@ -17,10 +10,12 @@ public class CS2_MapCycleConfig : BasePluginConfig
 {
     [JsonPropertyName("ConfigVersion")] public override int Version { get; set; } = 1;
     [JsonPropertyName("PluginEnabled")] public bool PluginEnabled { get; set; } = true;
-    [JsonPropertyName("Language")] public string Language { get; set; } = "en";
+
     [JsonPropertyName("EnableRandomMaps")] public bool EnableRandomMaps { get; set; } = false;
     [JsonPropertyName("EnableNoDuplicateRandomMaps")] public bool EnableNoDuplicateRandomMaps { get; set; } = true;
+
     [JsonPropertyName("EnableNextMapMessage")] public bool EnableNextMapMessage { get; set; } = true;
+
     [JsonPropertyName("MapCycleFile")] public string MapCycleFile { get; set; } = "mapcyclecustom.txt";
 }
 
@@ -33,206 +28,241 @@ public class MapEntry
 public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
 {
     public override string ModuleName => "CS2_MapCycle";
-    public override string ModuleVersion => "1.0";
-    public override string ModuleAuthor  => "ddbmaster";
-    public override string ModuleDescription => "Mapcycle-Plugin";   // ✅ hier angepasst
+    public override string ModuleVersion => "1.4.2";
+    public override string ModuleAuthor => "ddbmaster";
+    public override string ModuleDescription => "Mapcycle (mit letzte-Runde-Ansage)";
 
     public required CS2_MapCycleConfig Config { get; set; } = new();
 
-    private string MapCycleFile = "";
-    private List<MapEntry> MapCycleList = new();
-    private List<MapEntry> MapCycleInUseList = new();
-    private int MapCycleIdx = 0;
+    private const string DefaultMapCycleFile = "mapcyclecustom.txt";
 
-    private Dictionary<string, string> Lang = new();
+    private string MapCycleFilePath = "";
+    private List<MapEntry> MapCycleList = new();
+    private List<MapEntry> MapCycleInUse = new();
+    private int MapIndex = 0;
+    private readonly Random Rng = new();
+
+    private MapEntry? NextMap = null;
+    private bool NextMapAnnounced = false;
 
     public override void Load(bool hotReload)
     {
-        Console.WriteLine("------------------------------------------------------------------");
-        Console.WriteLine($"Plugin: {ModuleName} - {ModuleDescription} - Version: {ModuleVersion} by {ModuleAuthor}");
-
-        LoadLanguage();
+        Console.WriteLine($"[{ModuleName}] v{ModuleVersion} wird geladen");
 
         if (!Config.PluginEnabled)
         {
-            Console.WriteLine(GetText("PluginDisabled"));
+            Console.WriteLine($"[{ModuleName}] Plugin ist deaktiviert.");
             return;
         }
 
-        MapCycleFile = Path.Combine(Server.GameDirectory, "csgo", Config.MapCycleFile);
-        if (!File.Exists(MapCycleFile))
+        MapCycleFilePath = Path.Combine(Server.GameDirectory, "csgo", Config.MapCycleFile);
+
+        // ✅ Auto-Erstellung nur für Default-Dateiname
+        if (!File.Exists(MapCycleFilePath))
         {
-            Console.WriteLine($"WARNING: File not found = {MapCycleFile}\n{ModuleName} will be disabled.");
-            return;
-        }
-
-        // Mapcycle einlesen
-        MapCycleList = File.ReadAllLines(MapCycleFile)
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Select(s => s.Trim())
-            .ToList()
-            .ConvertAll(d =>
+            if (Config.MapCycleFile.Equals(DefaultMapCycleFile, StringComparison.OrdinalIgnoreCase))
             {
-                d = d.ToLower();
-                if (d.StartsWith("//"))
-                    return new MapEntry { IdOrName = "", DisplayName = "" };
-
-                if (d.Contains(":"))
+                File.WriteAllLines(MapCycleFilePath, new[]
                 {
-                    var parts = d.Split(':', 2);
-                    return new MapEntry { IdOrName = parts[0], DisplayName = parts[1] };
-                }
-                else
-                {
-                    return new MapEntry { IdOrName = d, DisplayName = d };
-                }
-            });
+                    "// CS2_MapCycle – automatisch erstellt",
+                    "// Eine Map pro Zeile (oder WorkshopID:Name)",
+                    "de_dust2",
+                    "de_inferno",
+                    "de_mirage",
+                    "de_nuke"
+                });
 
-        Console.WriteLine("---------------------------------");
-        Console.WriteLine($"Language = {Config.Language}");
-        Console.WriteLine($"EnableRandomMaps = {Config.EnableRandomMaps}");
-        Console.WriteLine($"EnableNoDuplicateRandomMaps = {Config.EnableNoDuplicateRandomMaps}");
-        Console.WriteLine($"EnableNextMapMessage = {Config.EnableNextMapMessage}");
-        Console.WriteLine($"MapCycleFile = {Config.MapCycleFile}");
-        Console.WriteLine("---------------------------------");
-        foreach (var map in MapCycleList)
-        {
-            if (!string.IsNullOrEmpty(map.IdOrName))
-                Console.WriteLine($"{map.IdOrName} (Display: {map.DisplayName})");
-        }
-        Console.WriteLine("------------------------------------------------------------------");
-
-        MapCycleList.RemoveAll(s => string.IsNullOrEmpty(s.IdOrName));
-
-        MapCycleInUseList = (Config.EnableRandomMaps && Config.EnableNoDuplicateRandomMaps)
-            ? MapCycleList.Distinct().ToList()
-            : MapCycleList.ToList();
-
-        if (MapCycleInUseList.Count == 0)
-        {
-            Console.WriteLine($"WARNING: No maps defined in {MapCycleFile}\n{ModuleName} will be disabled.");
-            return;
-        }
-
-        RegisterEventHandler<EventCsWinPanelMatch>(EventCsWinPanelMatchHandler);
-    }
-
-    public void OnConfigParsed(CS2_MapCycleConfig config)
-    {
-        try
-        {
-            if (config.Version < Config.Version)
-            {
-                int newVersion = Config.Version;
-                Config = config;
-                Config.Version = newVersion;
-                Config.Update();
+                Console.WriteLine($"[{ModuleName}] Standard-Mapcycle erstellt: {MapCycleFilePath}");
             }
             else
             {
-                Config = config;
+                Console.WriteLine($"[{ModuleName}] FEHLER: Mapcycle-Datei fehlt: {MapCycleFilePath}");
+                Console.WriteLine($"[{ModuleName}] Kein Auto-Create bei benutzerdefiniertem Dateinamen!");
+                return;
             }
         }
-        catch (Exception e)
-        {
-            var st = new StackTrace(e, true);
-            var frame = st.GetFrame(0);
-            var line = frame?.GetFileLineNumber() ?? 0;
-            Console.WriteLine($"!EXCEPTION - {ModuleName} - OnConfigParsed()\nLine {line}\n{e.Message}", true);
-        }
+
+        LoadMapcycle();
+
+        RegisterListener<Listeners.OnMapStart>(OnMapStart);
+        RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
+
+        RegisterEventHandler<EventRoundStart>(OnRoundStart);
+        RegisterEventHandler<EventCsWinPanelMatch>(OnWinPanelMatch);
     }
 
-    // ===== Mehrsprach-System =====
-    private void LoadLanguage()
-    {
-        try
-        {
-            string pluginFolder = Path.Combine(Server.GameDirectory,
-                "csgo", "addons", "counterstrikesharp", "plugins", "CS2_MapCycle");
-            string langDir = Path.Combine(pluginFolder, "lang");
-            string langFile = Path.Combine(langDir, $"{Config.Language}.json");
+    public void OnConfigParsed(CS2_MapCycleConfig config) => Config = config;
 
-            if (!File.Exists(langFile))
+    // ---------- GameRules Helper (statt Utilities.GetGameRules) ----------
+    private static CCSGameRules? TryGetGameRules()
+    {
+        // DesignerName: "cs_gamerules"
+        var proxy = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules")
+            .FirstOrDefault();
+
+        return proxy?.GameRules;
+    }
+
+    private void LoadMapcycle()
+    {
+        MapCycleList = File.ReadAllLines(MapCycleFilePath)
+            .Select(l => l.Trim())
+            .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("//"))
+            .Select(l =>
             {
-                Console.WriteLine($"Language file not found: {langFile}, falling back to English.");
-                langFile = Path.Combine(langDir, "en.json");
-            }
+                l = l.ToLower();
 
-            Lang = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(langFile))
-                   ?? new Dictionary<string, string>();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to load language: {ex.Message}");
-            Lang = new Dictionary<string, string>();
-        }
+                if (l.Contains(":"))
+                {
+                    var p = l.Split(':', 2);
+                    return new MapEntry
+                    {
+                        IdOrName = p[0].Trim(),
+                        DisplayName = p[1].Trim()
+                    };
+                }
+
+                return new MapEntry { IdOrName = l, DisplayName = l };
+            })
+            .ToList();
+
+        MapCycleInUse = (Config.EnableRandomMaps && Config.EnableNoDuplicateRandomMaps)
+            ? DistinctById(MapCycleList)
+            : MapCycleList.ToList();
+
+        Console.WriteLine($"[{ModuleName}] Maps geladen: {MapCycleList.Count}");
+        foreach (var m in MapCycleList)
+            Console.WriteLine($"  - {m.IdOrName} ({m.DisplayName})");
+
+        if (MapCycleInUse.Count == 0)
+            Console.WriteLine($"[{ModuleName}] WARNUNG: Keine Maps im Mapcycle!");
     }
 
-    private string GetText(string key, string mapName = "")
+    private static List<MapEntry> DistinctById(List<MapEntry> input)
+        => input.GroupBy(m => m.IdOrName).Select(g => g.First()).ToList();
+
+    private void OnMapStart(string mapName)
     {
-        if (Lang.TryGetValue(key, out var text))
-            return text.Replace("{map}", mapName);
-        return key;
+        NextMapAnnounced = false;
+
+        // NextMap pro Map einmal festlegen
+        NextMap ??= PickAndConsumeNextMap();
+
+        Console.WriteLine($"[{ModuleName}] OnMapStart: aktuelle Map = {mapName},BetreutesZocken nächste Map = {NextMap?.IdOrName}");
     }
 
-    // ===== Event-Handler für Mapwechsel =====
-    public HookResult EventCsWinPanelMatchHandler(EventCsWinPanelMatch @event, GameEventInfo info)
+    private void OnMapEnd()
     {
-        MapEntry nextEntry;
-        int idx;
+        // nichts erzwingen
+    }
 
-        float winPanelDelay;
-        int matchRestartDelay;
-        float delay;
+    // ✅ „letzte Runde startet“ – variabel, live
+    private HookResult OnRoundStart(EventRoundStart ev, GameEventInfo info)
+    {
+        if (!Config.EnableNextMapMessage || NextMapAnnounced)
+            return HookResult.Continue;
 
-        var mp_win_panel_display_time = ConVar.Find("mp_win_panel_display_time");
-        winPanelDelay = mp_win_panel_display_time?.GetPrimitiveValue<float>() ?? 1;
+        NextMap ??= PickAndConsumeNextMap();
+        if (NextMap == null || string.IsNullOrWhiteSpace(NextMap.IdOrName))
+            return HookResult.Continue;
 
-        var mp_match_restart_delay = ConVar.Find("mp_match_restart_delay");
-        matchRestartDelay = mp_match_restart_delay?.GetPrimitiveValue<int>() ?? 1;
+        var rules = TryGetGameRules();
+        if (rules == null)
+            return HookResult.Continue;
 
-        delay = Math.Max(winPanelDelay, matchRestartDelay);
-        delay = Math.Max(0, delay - 5);
+        // mp_maxrounds LIVE lesen (kann sich ändern)
+        int maxRounds = ConVar.Find("mp_maxrounds")?.GetPrimitiveValue<int>() ?? 0;
+        if (maxRounds <= 0)
+            return HookResult.Continue;
 
-        if (Config.EnableRandomMaps)
+        // RoundStart: aktuelle Runde läuft schon an, TotalRoundsPlayed zählt meist beendete Runden
+        int roundsPlayedIncludingCurrent = rules.TotalRoundsPlayed + 1;
+        int roundsLeftAfterThisStarts = maxRounds - roundsPlayedIncludingCurrent;
+
+        // 0 => diese Runde ist die letzte
+        if (roundsLeftAfterThisStarts == 0)
         {
-            idx = new Random().Next(0, MapCycleInUseList.Count);
-            nextEntry = MapCycleInUseList[idx];
-
-            if (Config.EnableNoDuplicateRandomMaps)
-                MapCycleInUseList.RemoveAt(idx);
-
-            if (MapCycleInUseList.Count == 0)
-                MapCycleInUseList = Config.EnableNoDuplicateRandomMaps
-                    ? MapCycleList.Distinct().ToList()
-                    : MapCycleList.ToList();
-        }
-        else
-        {
-            nextEntry = MapCycleInUseList[MapCycleIdx];
-            if (++MapCycleIdx >= MapCycleInUseList.Count)
-                MapCycleIdx = 0;
-        }
-
-        if (!string.IsNullOrEmpty(nextEntry.IdOrName))
-        {
-            if (Config.EnableNextMapMessage)
-                Server.PrintToChatAll(GetText("NextMapMessage", nextEntry.DisplayName));
-
-            AddTimer(delay, () =>
-            {
-                Console.WriteLine(GetText("ChangingMap", nextEntry.DisplayName));
-                if (ulong.TryParse(nextEntry.IdOrName, out _))
-                    Server.ExecuteCommand($"host_workshop_map {nextEntry.IdOrName}");
-                else
-                    Server.ExecuteCommand($"map {nextEntry.IdOrName}");
-            });
-        }
-        else
-        {
-            Console.WriteLine($"ERROR: {ModuleName} - Blank map entry.");
+            Server.PrintToChatAll($"BetreutesZocken nach dieser Runde kommt: {NextMap.DisplayName}");
+            NextMapAnnounced = true;
         }
 
         return HookResult.Continue;
+    }
+
+    private HookResult OnWinPanelMatch(EventCsWinPanelMatch ev, GameEventInfo info)
+    {
+        NextMap ??= PickAndConsumeNextMap();
+
+        if (NextMap == null || string.IsNullOrWhiteSpace(NextMap.IdOrName))
+        {
+            Console.WriteLine($"[{ModuleName}] FEHLER: NextMap ist leer – kein Mapwechsel.");
+            return HookResult.Continue;
+        }
+
+        float winPanel = ConVar.Find("mp_win_panel_display_time")?.GetPrimitiveValue<float>() ?? 1f;
+        int restart = ConVar.Find("mp_match_restart_delay")?.GetPrimitiveValue<int>() ?? 1;
+        float delay = Math.Max(0, Math.Max(winPanel, restart) - 5);
+
+        if (Config.EnableNextMapMessage)
+            Server.PrintToChatAll($"BetreutesZocken Jetzige Map kommt: {NextMap.DisplayName}");
+
+        var mapToGo = NextMap;
+        AddTimer(delay, () =>
+        {
+            Console.WriteLine($"[{ModuleName}] Wechsel zu {mapToGo.IdOrName}");
+
+            if (ulong.TryParse(mapToGo.IdOrName, out _))
+                Server.ExecuteCommand($"host_workshop_map {mapToGo.IdOrName}");
+            else
+                Server.ExecuteCommand($"map {mapToGo.IdOrName}");
+        });
+
+        // für die nächste Map neu setzen
+        NextMap = null;
+        NextMapAnnounced = false;
+
+        return HookResult.Continue;
+    }
+
+    // Konsumiert State (keine Doppelmaps)
+    private MapEntry? PickAndConsumeNextMap()
+    {
+        if (MapCycleList.Count == 0)
+            return null;
+
+        if (MapCycleInUse.Count == 0)
+        {
+            MapCycleInUse = (Config.EnableRandomMaps && Config.EnableNoDuplicateRandomMaps)
+                ? DistinctById(MapCycleList)
+                : MapCycleList.ToList();
+        }
+
+        if (MapCycleInUse.Count == 0)
+            return null;
+
+        MapEntry next;
+
+        if (Config.EnableRandomMaps)
+        {
+            int idx = Rng.Next(MapCycleInUse.Count);
+            next = MapCycleInUse[idx];
+
+            if (Config.EnableNoDuplicateRandomMaps)
+                MapCycleInUse.RemoveAt(idx);
+
+            if (MapCycleInUse.Count == 0)
+            {
+                MapCycleInUse = Config.EnableNoDuplicateRandomMaps
+                    ? DistinctById(MapCycleList)
+                    : MapCycleList.ToList();
+            }
+        }
+        else
+        {
+            next = MapCycleInUse[Math.Clamp(MapIndex, 0, MapCycleInUse.Count - 1)];
+            MapIndex = (MapIndex + 1) % MapCycleInUse.Count;
+        }
+
+        return next;
     }
 }
