@@ -15,7 +15,7 @@ Die eingebaute CS2-Kartenabstimmung wird dabei ignoriert.
 <h2>📦 Voraussetzungen</h2>
 <ul>
   <li>CS2 Dedicated Server</li>
-  <li><a href="https://github.com/roflmuffin/CounterStrikeSharp">CounterStrikeSharp</a> (mit Metamod:Source)</li>
+  <li><a href="https://github.com/roflmuffin/CounterStrikeSharp">CounterStrikeSharp</a> ab v1.0.380 (mit Metamod:Source)</li>
 </ul>
 <h2>🔧 Installation</h2>
 <ol>
@@ -27,11 +27,12 @@ Die eingebaute CS2-Kartenabstimmung wird dabei ignoriert.
 <h2>⚙️ Konfiguration</h2>
 <p>Datei: <code>game/csgo/addons/counterstrikesharp/configs/plugins/CS2_MapCycle/CS2_MapCycle.json</code></p>
 <pre><code>{
-  "ConfigVersion": 1,
+  "ConfigVersion": 2,
   "PluginEnabled": true,
   "EnableRandomMaps": false,
   "EnableNoDuplicateRandomMaps": true,
   "EnableNextMapMessage": true,
+  "ChatPrefix": "[MapCycle]",
   "MapCycleFile": "mapcyclecustom.txt"
 }
 </code></pre>
@@ -44,6 +45,7 @@ Die eingebaute CS2-Kartenabstimmung wird dabei ignoriert.
     <tr><td><code>EnableRandomMaps</code></td><td><code>false</code></td><td>Nächste Karte zufällig statt der Reihe nach</td></tr>
     <tr><td><code>EnableNoDuplicateRandomMaps</code></td><td><code>true</code></td><td>Im Zufallsmodus erst alle Karten einmal spielen, bevor sich eine wiederholt</td></tr>
     <tr><td><code>EnableNextMapMessage</code></td><td><code>true</code></td><td>Chat-Ansage der nächsten Karte in der letzten Runde und bei Matchende</td></tr>
+    <tr><td><code>ChatPrefix</code></td><td><code>[MapCycle]</code></td><td>Text vor jeder Chat-Ansage, z. B. dein Servername. Leer lassen (<code>""</code>) für keine Vorsilbe</td></tr>
     <tr><td><code>MapCycleFile</code></td><td><code>mapcyclecustom.txt</code></td><td>Name der Mapcycle-Datei im Ordner <code>game/csgo/</code></td></tr>
   </tbody>
 </table>
@@ -51,7 +53,7 @@ Die eingebaute CS2-Kartenabstimmung wird dabei ignoriert.
 <h2>🗒️ Mapcycle-Datei</h2>
 <p>
 Eine Karte pro Zeile. Zeilen mit <code>//</code> sind Kommentare.<br>
-Workshop-Maps werden als <code>WorkshopID:Anzeigename</code> eingetragen. Der Anzeigename erscheint dann in der Chat-Ansage.
+Workshop-Maps werden als <code>WorkshopID:Anzeigename</code> eingetragen. Der Anzeigename erscheint dann in der Chat-Ansage, mit Groß- und Kleinschreibung wie in der Datei.
 </p>
 <pre><code>// Normale Karten
 de_dust2
