@@ -1,20 +1,23 @@
-﻿using CounterStrikeSharp.API;
+using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Cvars;
 using CounterStrikeSharp.API.Modules.Utils;
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace CS2_MapCycle;
 
 public class CS2_MapCycleConfig : BasePluginConfig
 {
-    [JsonPropertyName("ConfigVersion")] public override int Version { get; set; } = 1;
+    [JsonPropertyName("ConfigVersion")] public override int Version { get; set; } = 2;
     [JsonPropertyName("PluginEnabled")] public bool PluginEnabled { get; set; } = true;
 
     [JsonPropertyName("EnableRandomMaps")] public bool EnableRandomMaps { get; set; } = false;
     [JsonPropertyName("EnableNoDuplicateRandomMaps")] public bool EnableNoDuplicateRandomMaps { get; set; } = true;
 
     [JsonPropertyName("EnableNextMapMessage")] public bool EnableNextMapMessage { get; set; } = true;
+
+    [JsonPropertyName("ChatPrefix")] public string ChatPrefix { get; set; } = "[MapCycle]";
 
     [JsonPropertyName("MapCycleFile")] public string MapCycleFile { get; set; } = "mapcyclecustom.txt";
 }
@@ -93,14 +96,36 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
 
     public void OnConfigParsed(CS2_MapCycleConfig config) => Config = config;
 
-    // ---------- GameRules Helper (statt Utilities.GetGameRules) ----------
-    private static CCSGameRules? TryGetGameRules()
+    // ---------- ConVar lesen (ConVar<T>, ab CounterStrikeSharp 1.0.379) ----------
+    // Liest eine Zahl aus einer Server-ConVar, egal ob sie intern int, float, bool … ist.
+    private static double ReadConVarNumber(string name, double fallback)
     {
-        // DesignerName: "cs_gamerules"
-        var proxy = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules")
-            .FirstOrDefault();
+        var cv = ConVar<float>.Find(name);
+        if (cv == null || !cv.IsValid)
+            return fallback;
 
-        return proxy?.GameRules;
+        try
+        {
+            return cv.Type switch
+            {
+                ConVarType.Bool => cv.As<bool>().Value ? 1 : 0,
+                ConVarType.Int16 => cv.As<short>().Value,
+                ConVarType.UInt16 => cv.As<ushort>().Value,
+                ConVarType.Int32 => cv.As<int>().Value,
+                ConVarType.UInt32 => cv.As<uint>().Value,
+                ConVarType.Int64 => cv.As<long>().Value,
+                ConVarType.UInt64 => cv.As<ulong>().Value,
+                ConVarType.Float32 => cv.As<float>().Value,
+                ConVarType.Float64 => cv.As<double>().Value,
+                _ => double.TryParse(cv.ValueAsString, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)
+                    ? v
+                    : fallback
+            };
+        }
+        catch (InvalidOperationException)
+        {
+            return fallback;
+        }
     }
 
     private void LoadMapcycle()
@@ -110,19 +135,22 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
             .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("//"))
             .Select(l =>
             {
-                l = l.ToLower();
-
-                if (l.Contains(":"))
+                // Nur die Map-ID/den Map-Namen kleinschreiben,
+                // der Anzeigename bleibt so, wie er in der Datei steht.
+                if (l.Contains(':'))
                 {
                     var p = l.Split(':', 2);
+                    var id = p[0].Trim().ToLowerInvariant();
+                    var display = p[1].Trim();
                     return new MapEntry
                     {
-                        IdOrName = p[0].Trim(),
-                        DisplayName = p[1].Trim()
+                        IdOrName = id,
+                        DisplayName = string.IsNullOrWhiteSpace(display) ? id : display
                     };
                 }
 
-                return new MapEntry { IdOrName = l, DisplayName = l };
+                var name = l.ToLowerInvariant();
+                return new MapEntry { IdOrName = name, DisplayName = name };
             })
             .ToList();
 
@@ -148,7 +176,7 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
         // NextMap pro Map einmal festlegen
         NextMap ??= PickAndConsumeNextMap();
 
-        Console.WriteLine($"[{ModuleName}] OnMapStart: aktuelle Map = {mapName},BetreutesZocken nächste Map = {NextMap?.IdOrName}");
+        Console.WriteLine($"[{ModuleName}] OnMapStart: aktuelle Map = {mapName}, nächste Map = {NextMap?.IdOrName}");
     }
 
     private void OnMapEnd()
@@ -166,12 +194,13 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
         if (NextMap == null || string.IsNullOrWhiteSpace(NextMap.IdOrName))
             return HookResult.Continue;
 
-        var rules = TryGetGameRules();
+        // ab CounterStrikeSharp 1.0.380 intern gecacht
+        var rules = Utilities.GetGameRules();
         if (rules == null)
             return HookResult.Continue;
 
         // mp_maxrounds LIVE lesen (kann sich ändern)
-        int maxRounds = ConVar.Find("mp_maxrounds")?.GetPrimitiveValue<int>() ?? 0;
+        int maxRounds = (int)ReadConVarNumber("mp_maxrounds", 0);
         if (maxRounds <= 0)
             return HookResult.Continue;
 
@@ -182,7 +211,7 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
         // 0 => diese Runde ist die letzte
         if (roundsLeftAfterThisStarts == 0)
         {
-            Server.PrintToChatAll($"BetreutesZocken nach dieser Runde kommt: {NextMap.DisplayName}");
+            PrintChat($"Nach dieser Runde kommt: {NextMap.DisplayName}");
             NextMapAnnounced = true;
         }
 
@@ -199,12 +228,12 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
             return HookResult.Continue;
         }
 
-        float winPanel = ConVar.Find("mp_win_panel_display_time")?.GetPrimitiveValue<float>() ?? 1f;
-        int restart = ConVar.Find("mp_match_restart_delay")?.GetPrimitiveValue<int>() ?? 1;
+        float winPanel = (float)ReadConVarNumber("mp_win_panel_display_time", 1);
+        int restart = (int)ReadConVarNumber("mp_match_restart_delay", 1);
         float delay = Math.Max(0, Math.Max(winPanel, restart) - 5);
 
         if (Config.EnableNextMapMessage)
-            Server.PrintToChatAll($"BetreutesZocken Jetzige Map kommt: {NextMap.DisplayName}");
+            PrintChat($"Nächste Map: {NextMap.DisplayName}");
 
         var mapToGo = NextMap;
         AddTimer(delay, () =>
@@ -222,6 +251,13 @@ public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
         NextMapAnnounced = false;
 
         return HookResult.Continue;
+    }
+
+    // Chat-Ausgabe mit optionalem Präfix aus der Config
+    private void PrintChat(string message)
+    {
+        var prefix = Config.ChatPrefix?.Trim();
+        Server.PrintToChatAll(string.IsNullOrEmpty(prefix) ? message : $"{prefix} {message}");
     }
 
     // Konsumiert State (keine Doppelmaps)
