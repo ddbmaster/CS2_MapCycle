@@ -28,7 +28,7 @@ public class MapEntry
 public class CS2_MapCycle : BasePlugin, IPluginConfig<CS2_MapCycleConfig>
 {
     public override string ModuleName => "CS2_MapCycle";
-    public override string ModuleVersion => "1.4.2";
+    public override string ModuleVersion => "1.4.3";
     public override string ModuleAuthor => "ddbmaster";
     public override string ModuleDescription => "Mapcycle (mit letzte-Runde-Ansage)";
 
